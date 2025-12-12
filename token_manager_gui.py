@@ -112,13 +112,13 @@ def save_active_token(token_info: dict):
         return False
 
 
-def refresh_token(rt: str) -> dict | None:
+def refresh_token(rt: str, timeout: float = 30) -> dict | None:
     try:
         resp = requests.post(
             REFRESH_URL,
             data={"grant_type": "refresh_token", "refresh_token": rt, "client_id": CLIENT_ID},
             headers={"Content-Type": "application/x-www-form-urlencoded"},
-            timeout=30,
+            timeout=timeout,
         )
         try:
             payload = resp.json()
@@ -131,13 +131,13 @@ def refresh_token(rt: str) -> dict | None:
         return None
 
 
-def _do_query(access_token: str) -> tuple[float, dict]:
+def _do_query(access_token: str, timeout: float = 30) -> tuple[float, dict]:
     """内部查询函数，仅用 access_token 查询一次"""
     try:
         resp = requests.get(
             USAGE_URL,
             headers={"Authorization": f"Bearer {access_token}", "User-Agent": "Mozilla/5.0"},
-            timeout=30,
+            timeout=timeout,
         )
         if resp.ok:
             data = resp.json()
@@ -153,25 +153,24 @@ def _do_query(access_token: str) -> tuple[float, dict]:
     return -1, {}
 
 
-def query_usage(access_token: str, refresh_tok: str = None) -> tuple[float, dict, dict | None]:
+def query_usage(access_token: str, refresh_tok: str = None, timeout: float = 30) -> tuple[float, dict, dict | None]:
     """查询额度，失败时尝试刷新 token 重试。返回 (ratio, info, new_tokens)"""
     if access_token:
-        ratio, info = _do_query(access_token)
+        ratio, info = _do_query(access_token, timeout=timeout)
         if ratio >= 0:
             return ratio, info, None
     
     if refresh_tok:
-        result = refresh_token(refresh_tok)
+        result = refresh_token(refresh_tok, timeout=timeout)
         if isinstance(result, dict):
             new_at = (result.get("access_token") or "").strip()
             new_rt = (result.get("refresh_token") or refresh_tok or "").strip()
             if new_at:
-                ratio, info = _do_query(new_at)
+                ratio, info = _do_query(new_at, timeout=timeout)
                 if ratio >= 0:
                     return ratio, info, {"access_token": new_at, "refresh_token": new_rt}
     
     return -1, {}, None
-
 
 class TokenManagerGUI:
     def __init__(self):
@@ -184,6 +183,7 @@ class TokenManagerGUI:
         self._active_check_inflight = False
         self._check_all_inflight = False
         self._switch_inflight = False
+        self._last_active_ratio: float | None = None
 
         self.monitoring = False
 
@@ -299,28 +299,42 @@ class TokenManagerGUI:
         if updated:
             save_backup_tokens(tokens)
 
-    def _sync_active_to_backup(self, active: dict | None = None):
+    def _sync_active_to_backup(self, active: dict | None = None, ratio: float | None = None):
         active = active or load_active_token()
         if not active or not active.get("id"):
             return
 
         tokens = load_backup_tokens()
+
+        def apply_usage_fields(t: dict):
+            if ratio is None:
+                return
+            if ratio >= 0:
+                t["ratio"] = ratio
+                if ratio >= WARN_THRESHOLD:
+                    t["status"] = "额度不足"
+                else:
+                    t["status"] = "active"
+
         found = False
         for t in tokens:
             if t.get("id") == active["id"]:
                 t["refresh_token"] = active.get("refresh_token", "")
                 t["access_token"] = active.get("access_token", "")
                 t.setdefault("status", "active")
+                apply_usage_fields(t)
                 found = True
                 break
 
         if not found:
-            tokens.insert(0, {
+            new_entry = {
                 "id": active["id"],
                 "refresh_token": active.get("refresh_token", ""),
                 "access_token": active.get("access_token", ""),
                 "status": "active",
-            })
+            }
+            apply_usage_fields(new_entry)
+            tokens.insert(0, new_entry)
 
         save_backup_tokens(tokens)
 
@@ -330,7 +344,20 @@ class TokenManagerGUI:
 
         active = load_active_token()
         try:
-            self._sync_active_to_backup(active)
+            ratio = self._last_active_ratio
+            # 若本次运行期间从未成功查询到 active 的额度，退出时做一次快速补查（避免长时间卡住）
+            if ratio is None and active:
+                at = active.get("access_token", "")
+                rt = active.get("refresh_token", "")
+                ratio2, info2, new_tokens2 = query_usage(at, rt, timeout=5)
+                if new_tokens2:
+                    active["access_token"] = new_tokens2.get("access_token", "")
+                    active["refresh_token"] = new_tokens2.get("refresh_token", "")
+                    save_active_token(active)
+                if ratio2 >= 0:
+                    ratio = ratio2
+
+            self._sync_active_to_backup(active, ratio=ratio)
         except Exception:
             pass
 
@@ -408,6 +435,9 @@ class TokenManagerGUI:
         def worker(active_snapshot: dict):
             try:
                 ratio, info, new_tokens = query_usage(at, rt)
+
+                if ratio >= 0:
+                    self._last_active_ratio = ratio
 
                 if new_tokens:
                     active_snapshot["access_token"] = new_tokens.get("access_token", "")
