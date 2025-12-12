@@ -26,6 +26,7 @@ else:
 
 TOKENS_FILE = BASE_DIR / "tokens.json"
 FACTORY_AUTH_FILE = Path(os.path.expanduser("~")) / ".factory" / "auth.json"
+LOCK_FILE = BASE_DIR / ".token_manager.lock"
 REFRESH_URL = "https://api.workos.com/user_management/authenticate"
 USAGE_URL = "https://app.factory.ai/api/organization/members/chat-usage"
 CLIENT_ID = "client_01HNM792M5G5G1A2THWPXKFMXB"
@@ -174,6 +175,39 @@ def query_usage(access_token: str, refresh_tok: str = None, timeout: float = 30)
 
 class TokenManagerGUI:
     def __init__(self):
+        # 单实例检查：尝试创建并独占锁文件
+        self._lock_file = None
+        try:
+            # Windows下尝试以独占模式打开，如果失败说明已有实例在运行
+            if sys.platform == 'win32':
+                import msvcrt
+                try:
+                    self._lock_file = open(LOCK_FILE, 'w')
+                    msvcrt.locking(self._lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                    self._lock_file.write(str(os.getpid()))
+                    self._lock_file.flush()
+                except (IOError, OSError):
+                    if self._lock_file:
+                        self._lock_file.close()
+                    messagebox.showerror("错误", "Token 管理器已在运行！\n请勿重复启动。")
+                    sys.exit(0)
+            else:
+                # Unix/Linux使用fcntl
+                import fcntl
+                try:
+                    self._lock_file = open(LOCK_FILE, 'w')
+                    fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    self._lock_file.write(str(os.getpid()))
+                    self._lock_file.flush()
+                except (IOError, OSError):
+                    if self._lock_file:
+                        self._lock_file.close()
+                    messagebox.showerror("错误", "Token 管理器已在运行！\n请勿重复启动。")
+                    sys.exit(0)
+        except Exception as e:
+            messagebox.showerror("错误", f"单实例检查失败：{str(e)}")
+            sys.exit(0)
+
         self.root = tk.Tk()
         self.root.title("Token 管理器")
         self.root.geometry("480x480")
@@ -374,6 +408,14 @@ class TokenManagerGUI:
         if choice is True:
             if not atomic_write_json(FACTORY_AUTH_FILE, {}):
                 self._log_safe("清空 auth.json 失败")
+
+        # 释放锁文件
+        try:
+            if self._lock_file:
+                self._lock_file.close()
+            LOCK_FILE.unlink(missing_ok=True)
+        except Exception:
+            pass
 
         self.root.destroy()
 

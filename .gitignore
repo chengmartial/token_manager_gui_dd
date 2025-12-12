@@ -21,6 +21,7 @@ dist/
 
 # 日志
 *.log
+.test_lock
 
 # 系统文件
 .DS_Store
