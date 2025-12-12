@@ -49,6 +49,19 @@ refresh_token----access_token----时间戳
 4. 选中一个账号，点击「切换选中」即可切换
 5. 建议开启监控，额度用完会自动提醒
 
+## 额度用完时如何切换
+
+当你在 Factory CLI 中看到以下提示时，说明当前账号额度已用完：
+
+```
+Ready for more? Reload your tokens at https://app.factory.ai/settings/billing to keep building.
+```
+
+**切换步骤：**
+1. 打开本 GUI 工具
+2. 选中一个有额度的备用账号，点击「切换选中」
+3. 回到 CLI，发送 `继续` 即可继续使用
+
 ## 注意事项
 
 - 只有额度 100% 用完的账号才无法切换
