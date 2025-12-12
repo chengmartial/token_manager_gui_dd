@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# 敏感数据
+tokens.json
+auth.json
+
+# IDE
+.vscode/
+.idea/
+.spec-workflow/
+
+# 打包产物
+build/
+dist/
+*.spec
+*.exe
+
+# 日志
+*.log
+
+# 系统文件
+.DS_Store
+Thumbs.db
