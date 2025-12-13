@@ -22,6 +22,7 @@ dist/
 # 日志
 *.log
 .test_lock
+.token_manager.lock
 
 # 系统文件
 .DS_Store
